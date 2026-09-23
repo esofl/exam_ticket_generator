@@ -10,11 +10,18 @@ __pycache__/
 venv/
 ENV/
 
-# Excel temporary and output files
+# Output and temporary files
 ~$*.xlsx
+~$*.docx
+/students.xlsx
+journal.xlsx
+results.xlsx
+test_*.xlsx
+test_*.docx
 test_journal*.xlsx
 
 # Editors and OS
 .vscode/
 .idea/
 Thumbs.db
+.DS_Store
