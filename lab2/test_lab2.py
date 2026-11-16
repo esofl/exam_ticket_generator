@@ -24,7 +24,7 @@ from journal_manager import (
     get_first_ticket_for_student,
     init_journal_if_needed,
 )
-from models import Student
+from models import Student, Ticket
 from ticket_service import TicketService
 
 TEST_STUDENTS_FILE = "test_students_tmp.xlsx"
@@ -112,11 +112,7 @@ class TestLab2TicketGenerator(unittest.TestCase):
         - 2-й выбор того же студента: ТОТ ЖЕ номер билета, Повтор = 'да'.
         - Новая строка добавляется в конец журнала, старые не затираются.
         """
-        service = TicketService(
-            students_filepath=TEST_STUDENTS_FILE,
-            tickets_filepath=TEST_TICKETS_FILE,
-            results_filepath=TEST_RESULTS_FILE,
-        )
+        service = TicketService.from_files(TEST_STUDENTS_FILE, TEST_TICKETS_FILE, TEST_RESULTS_FILE)
 
         student1 = Student(group="ИТ-21", last_name="Иванов", first_name="Иван")
 
@@ -176,6 +172,55 @@ class TestLab2TicketGenerator(unittest.TestCase):
                 )
 
         self.assertEqual(retry_called, 1, "Callback повтора должен быть вызван при блокировке")
+
+
+class FakeJournal:
+    def __init__(self):
+        self.rows = []
+
+    def first_ticket(self, student):
+        return next((n for s, n, _r, _at in self.rows if s == student), None)
+
+    def append(self, student, ticket_number, is_repeat, at):
+        self.rows.append((student, ticket_number, is_repeat, at))
+
+
+class FakeTickets:
+    def __init__(self, tickets):
+        self._t = tickets
+
+    def tickets(self):
+        return self._t
+
+
+class TestTicketServiceWithFakes(unittest.TestCase):
+    """DIP: правило назначения проверяется без Excel/Word."""
+
+    def setUp(self):
+        self.tickets = {n: Ticket(n, [f"q{n}.1", f"q{n}.2", f"q{n}.3"]) for n in (1, 2, 3)}
+        self.journal = FakeJournal()
+        self.service = TicketService(MagicMock(), FakeTickets(self.tickets), self.journal, choose=lambda nums: nums[-1])
+
+    def test_new_student_gets_random_and_repeat_gets_first(self):
+        s = Student("G", "A", "B")
+        t1, r1 = self.service.generate_or_get_ticket(s)
+        t2, r2 = self.service.generate_or_get_ticket(s)
+        self.assertEqual((t1.number, r1), (3, False))
+        self.assertEqual((t2.number, r2), (3, True))
+        self.assertEqual([row[1:3] for row in self.journal.rows], [(3, False), (3, True)])
+
+    def test_no_tickets_raises(self):
+        from ticket_service import NoTicketsError
+        service = TicketService(MagicMock(), FakeTickets({}), self.journal)
+        with self.assertRaises(NoTicketsError):
+            service.generate_or_get_ticket(Student("G", "A", "B"))
+        self.assertEqual(self.journal.rows, [])
+
+    def test_ticket_missing_in_docx_does_not_crash(self):
+        s = Student("G", "A", "B")
+        self.journal.rows.append((s, 42, False, None))
+        t, r = self.service.generate_or_get_ticket(s)
+        self.assertEqual((t.number, r, len(t.questions)), (42, True, 3))
 
 
 if __name__ == "__main__":

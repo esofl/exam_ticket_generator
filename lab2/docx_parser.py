@@ -7,7 +7,8 @@ import logging
 import os
 import re
 from typing import Dict, List, Optional
-import docx
+
+from docx_io import read_paragraphs
 
 from models import Ticket
 
@@ -39,17 +40,10 @@ def parse_tickets_from_docx(filepath: str) -> Dict[int, Ticket]:
         raise FileNotFoundError(f"Файл с билетами '{filepath}' не найден.")
 
     try:
-        doc = docx.Document(filepath)
-    except Exception as e:
+        raw_lines: List[str] = [t.strip() for t in read_paragraphs(filepath) if t.strip()]
+    except ValueError as e:
         logger.error(f"Не удалось открыть Word-документ '{filepath}': {e}")
-        raise ValueError(f"Ошибка открытия файла Word '{filepath}': {e}") from e
-
-    # Извлекаем все непустые строки текста из параграфов и таблиц (если есть)
-    raw_lines: List[str] = []
-    for p in doc.paragraphs:
-        text = p.text.strip()
-        if text:
-            raw_lines.append(text)
+        raise
 
     # Регулярные выражения
     ticket_header_pattern = re.compile(r"^Билет\s+(\d+)\b", re.IGNORECASE)

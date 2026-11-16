@@ -1,110 +1,71 @@
 """
-Сервисный слой генератора билетов.
-Объединяет парсинг Word, чтение списков студентов из Excel,
-бизнес-логику назначения билетов (с проверкой повторов) и сохранение в журнал.
+Бизнес-логика назначения билетов (SRP: только правило «первый билет / случайный»).
+Источники данных приходят через конструктор (DIP), поэтому сервис
+тестируется на фейках и не знает ни про Excel, ни про веб.
 """
 
-import logging
 import random
-from typing import Callable, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Callable, List, Sequence, Tuple, TypeVar
 
-from docx_parser import parse_tickets_from_docx
-from excel_reader import get_group_names, get_students_for_group
-from journal_manager import append_result_record, get_first_ticket_for_student
 from models import Student, Ticket
+from repositories import (
+    DocxTicketSource,
+    ExcelResultJournal,
+    ExcelStudentSource,
+    ResultJournal,
+    StudentSource,
+    TicketSource,
+)
 
-logger = logging.getLogger(__name__)
+T = TypeVar("T")
+
+
+class NoTicketsError(ValueError):
+    """В tickets.docx нет ни одного корректного билета."""
 
 
 class TicketService:
     def __init__(
         self,
-        students_filepath: str = "students.xlsx",
-        tickets_filepath: str = "tickets.docx",
-        results_filepath: str = "results.xlsx",
-    ):
-        self.students_filepath = students_filepath
-        self.tickets_filepath = tickets_filepath
-        self.results_filepath = results_filepath
-        self._tickets: Optional[Dict[int, Ticket]] = None
+        students: StudentSource,
+        tickets: TicketSource,
+        journal: ResultJournal,
+        choose: Callable[[Sequence[int]], int] = random.choice,
+        clock: Callable[[], datetime] = datetime.now,
+    ) -> None:
+        self._students = students
+        self._tickets = tickets
+        self._journal = journal
+        self._choose = choose
+        self._clock = clock
+
+    @classmethod
+    def from_files(cls, students_path: str, tickets_path: str, results_path: str) -> "TicketService":
+        return cls(ExcelStudentSource(students_path), DocxTicketSource(tickets_path), ExcelResultJournal(results_path))
 
     def load_groups(self) -> List[str]:
-        """Возвращает список доступных групп из students.xlsx."""
-        return get_group_names(self.students_filepath)
+        return self._students.groups()
 
-    def load_students(self, group_name: str) -> List[Student]:
-        """Возвращает список студентов указанной группы."""
-        return get_students_for_group(self.students_filepath, group_name)
+    def load_students(self, group: str) -> List[Student]:
+        return self._students.students(group)
 
-    def load_tickets(self, force_reload: bool = False) -> Dict[int, Ticket]:
+    def generate_or_get_ticket(self, student: Student) -> Tuple[Ticket, bool]:
         """
-        Загружает билеты из tickets.docx. Кэширует результат.
+        Повторный студент -> номер из его самой первой записи, Повтор = да.
+        Новый -> случайный билет 1..N, Повтор = нет.
+        Запись в журнал — сразу, до возврата результата.
         """
-        if self._tickets is None or force_reload:
-            self._tickets = parse_tickets_from_docx(self.tickets_filepath)
-        return self._tickets
+        tickets = self._tickets.tickets()
+        if not tickets:
+            raise NoTicketsError("В файле tickets.docx не найдено ни одного корректного билета.")
 
-    def generate_or_get_ticket(
-        self,
-        student: Student,
-        on_lock_retry: Optional[Callable[[], bool]] = None,
-    ) -> Tuple[Ticket, bool]:
-        """
-        Назначает билет студенту:
-        1. Если студент уже есть в results.xlsx -> берется номер билета из самой первой записи.
-           Повтор = 'да'.
-        2. Если студента нет -> выбирается случайный билет из доступных в tickets.docx.
-           Повтор = 'нет'.
-        3. Результат немедленно дописывается в results.xlsx.
+        first = self._journal.first_ticket(student)
+        is_repeat = first is not None
+        number = first if is_repeat else self._choose(sorted(tickets))
 
-        :param student: Объект Student (группа, фамилия, имя)
-        :param on_lock_retry: Callback при блокировке results.xlsx
-        :return: Кортеж (Ticket, is_repeat)
-        """
-        tickets_dict = self.load_tickets()
-        if not tickets_dict:
-            raise ValueError("В файле tickets.docx не найдено ни одного корректного билета.")
+        # Номер из старого журнала мог исчезнуть из текущего tickets.docx — не падаем.
+        ticket = tickets.get(number) or Ticket(number, [f"Вопрос {i} (билет № {number} отсутствует в tickets.docx)" for i in (1, 2, 3)])
 
-        # Проверяем историю в results.xlsx
-        first_ticket_num = get_first_ticket_for_student(
-            self.results_filepath,
-            group=student.group,
-            last_name=student.last_name,
-            first_name=student.first_name,
-        )
-
-        if first_ticket_num is not None:
-            # Идемпотентность: повторный выбор возвращает тот же билет
-            ticket_number = first_ticket_num
-            is_repeat = True
-        else:
-            # Новый студент: случайный выбор среди доступных билетов
-            ticket_number = random.choice(list(tickets_dict.keys()))
-            is_repeat = False
-
-        # Получаем объект билета (если номер есть в файле билетов)
-        if ticket_number in tickets_dict:
-            ticket = tickets_dict[ticket_number]
-        else:
-            # Защитный случай: если номер из старого журнала не найден в текущем tickets.docx
-            ticket = Ticket(
-                number=ticket_number,
-                questions=[
-                    f"Вопрос 1 (Билет №{ticket_number})",
-                    f"Вопрос 2 (Билет №{ticket_number})",
-                    f"Вопрос 3 (Билет №{ticket_number})"
-                ]
-            )
-
-        # Сохранение в results.xlsx сразу после генерации
-        append_result_record(
-            group=student.group,
-            last_name=student.last_name,
-            first_name=student.first_name,
-            ticket_number=ticket_number,
-            is_repeat=is_repeat,
-            filepath=self.results_filepath,
-            on_lock_retry=on_lock_retry,
-        )
-
+        self._journal.append(student, number, is_repeat, self._clock())
         return ticket, is_repeat
