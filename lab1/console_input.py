@@ -86,3 +86,23 @@ def prompt_non_empty(prompt: str) -> str | None:
         value = value.strip()
         if value:
             return value
+
+
+class ConsoleInput:
+    """Адаптер InputSource для консоли (ESC -> None)."""
+
+    def ask(self, prompt: str) -> str | None:
+        return prompt_non_empty(prompt)
+
+
+class ConsoleOutput:
+    """Адаптер Output для консоли."""
+
+    def show(self, message: str) -> None:
+        print(message)
+
+
+def wait_until_unlocked(path: str) -> None:
+    """Колбэк для ExcelJournal: просит закрыть файл в Excel и ждёт Enter."""
+    print(f"\n[ВНИМАНИЕ] Файл '{path}' открыт в другой программе (например, Microsoft Excel).")
+    input("Закройте файл и нажмите Enter для повторной попытки сохранения...")

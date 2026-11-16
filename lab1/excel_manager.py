@@ -1,97 +1,59 @@
 """
-Модуль для работы с файлом Excel (journal.xlsx).
-Обеспечивает создание файла с шапкой, дозапись строк и обработку блокировок файла.
+Журнал journal.xlsx (SRP: только хранение).
+Не общается с пользователем напрямую: при блокировке файла вызывает
+переданный колбэк on_locked (DIP) — консоль/GUI сами решают, как ждать.
 """
 
-from datetime import datetime
 import os
+from datetime import datetime
+from typing import Callable
+
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font
-
 
 HEADERS = ["Last name", "First name", "Номер билета", "Дата и время"]
 DEFAULT_FILENAME = "journal.xlsx"
 
 
-def init_journal_if_needed(filepath: str = DEFAULT_FILENAME) -> None:
-    """
-    Создает файл журнала с шапкой, если он еще не существует.
-    Если файл уже есть — ничего не перезаписывает.
-    """
-    if not os.path.exists(filepath):
+class ExcelJournal:
+    def __init__(self, filepath: str = DEFAULT_FILENAME, on_locked: Callable[[str], None] | None = None) -> None:
+        self._path = filepath
+        self._on_locked = on_locked or (lambda _path: None)
+
+    def ensure_exists(self) -> None:
+        """Создаёт файл с шапкой, если его нет. Существующий не трогает."""
+        if os.path.exists(self._path):
+            return
         wb = Workbook()
         ws = wb.active
         ws.title = "Журнал"
         ws.append(HEADERS)
+        for col in range(1, len(HEADERS) + 1):
+            ws.cell(row=1, column=col).font = Font(bold=True)
+            ws.cell(row=1, column=col).alignment = Alignment(horizontal="center")
+        for letter, width in {"A": 18, "B": 18, "C": 16, "D": 22}.items():
+            ws.column_dimensions[letter].width = width
+        self._save(wb)
 
-        # Оформление шапки
-        header_font = Font(bold=True)
-        center_align = Alignment(horizontal="center", vertical="center")
-        for col_idx in range(1, len(HEADERS) + 1):
-            cell = ws.cell(row=1, column=col_idx)
-            cell.font = header_font
-            cell.alignment = center_align
+    def append(self, last_name: str, first_name: str, ticket: int, at: datetime) -> None:
+        """Дописывает строку в конец и сразу сохраняет; при блокировке ждёт и повторяет."""
+        self.ensure_exists()
+        while True:
+            try:
+                wb = load_workbook(self._path)
+                break
+            except PermissionError:
+                self._on_locked(self._path)
+        ws = wb.active
+        ws.append([last_name, first_name, ticket, at.strftime("%Y-%m-%d %H:%M:%S")])
+        for col in (3, 4):
+            ws.cell(row=ws.max_row, column=col).alignment = Alignment(horizontal="center")
+        self._save(wb)
 
-        # Установка удобной ширины колонок
-        column_widths = {"A": 18, "B": 18, "C": 16, "D": 22}
-        for col_letter, width in column_widths.items():
-            ws.column_dimensions[col_letter].width = width
-
-        _save_with_retry(wb, filepath)
-
-
-def append_record(
-    last_name: str,
-    first_name: str,
-    ticket_number: int,
-    timestamp: datetime | None = None,
-    filepath: str = DEFAULT_FILENAME,
-) -> None:
-    """
-    Дописывает запись о студенте в конец файла journal.xlsx.
-    Сохраняет файл сразу же после добавления записи.
-    """
-    init_journal_if_needed(filepath)
-
-    if timestamp is None:
-        timestamp = datetime.now()
-    formatted_time = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-
-    while True:
-        try:
-            wb = load_workbook(filepath)
-            ws = wb.active
-
-            row_data = [last_name, first_name, ticket_number, formatted_time]
-            ws.append(row_data)
-
-            # Выравнивание номера билета и даты по центру
-            last_row = ws.max_row
-            ws.cell(row=last_row, column=3).alignment = Alignment(horizontal="center")
-            ws.cell(row=last_row, column=4).alignment = Alignment(horizontal="center")
-
-            _save_with_retry(wb, filepath)
-            break
-        except PermissionError:
-            print(f"\n[ВНИМАНИЕ] Файл '{filepath}' открыт в другой программе (например, Microsoft Excel).")
-            print("Пожалуйста, закройте файл в Excel и нажмите Enter для повторной попытки сохранения...")
-            input()
-        except Exception as e:
-            print(f"\n[ОШИБКА] Не удалось записать в '{filepath}': {e}")
-            print("Нажмите Enter для повторной попытки...")
-            input()
-
-
-def _save_with_retry(wb: Workbook, filepath: str) -> None:
-    """
-    Сохраняет книгу Excel с обработкой блокировки файла (PermissionError).
-    Предлагает пользователю закрыть файл и нажать Enter, предотвращая падение программы.
-    """
-    while True:
-        try:
-            wb.save(filepath)
-            return
-        except PermissionError:
-            print(f"\n[ВНИМАНИЕ] Файл '{filepath}' открыт в другой программе (например, Microsoft Excel).")
-            print("Пожалуйста, закройте файл в Excel и нажмите Enter для повторной попытки сохранения...")
-            input()
+    def _save(self, wb: Workbook) -> None:
+        while True:
+            try:
+                wb.save(self._path)
+                return
+            except PermissionError:
+                self._on_locked(self._path)

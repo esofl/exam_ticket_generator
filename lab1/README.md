@@ -26,6 +26,21 @@
 
 ---
 
+## 🧱 Архитектура и SOLID
+
+| Модуль | Ответственность | Принцип |
+| :--- | :--- | :--- |
+| `protocols.py` | Интерфейсы `InputSource`, `Output`, `TicketGenerator`, `Journal` | **ISP** — маленькие узкие интерфейсы, **DIP** — сценарий зависит от них |
+| `exam_session.py` | `ExamSession` — только порядок шагов (ввод → билет → запись) | **SRP** |
+| `ticket_generator.py` | `RandomTicketGenerator` — только выбор номера | **SRP**, **LSP** — любая реализация `next_ticket()` подставляется без изменений сценария |
+| `excel_manager.py` | `ExcelJournal` — только хранение; о блокировке файла сообщает через колбэк `on_locked`, не печатает сам | **SRP**, **DIP** |
+| `console_input.py` | Посимвольный ввод с ESC + адаптеры `ConsoleInput`/`ConsoleOutput` | **SRP** |
+| `main.py` | Composition root — собирает реализации | **OCP** — замена консоли/хранилища меняет только этот файл |
+
+Благодаря DIP сценарий тестируется на фейках без консоли и без Excel (`TestExamSession`).
+
+---
+
 ## 📋 Формат таблицы `journal.xlsx`
 
 | Last name | First name | Номер билета | Дата и время |
