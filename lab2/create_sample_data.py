@@ -6,7 +6,8 @@
 import os
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
-import docx
+
+from docx_io import write_paragraphs
 
 
 def create_sample_students_xlsx(filepath: str = "students.xlsx") -> None:
@@ -58,7 +59,7 @@ def create_sample_students_xlsx(filepath: str = "students.xlsx") -> None:
 
 
 def create_sample_tickets_docx(filepath: str = "tickets.docx") -> None:
-    doc = docx.Document()
+    lines = []
 
     tickets_data = [
         (
@@ -104,17 +105,17 @@ def create_sample_tickets_docx(filepath: str = "tickets.docx") -> None:
     ]
 
     for t_num, questions in tickets_data:
-        doc.add_paragraph(f"Билет {t_num}")
+        lines.append(f"Билет {t_num}")
         for q_idx, q_text in enumerate(questions, start=1):
-            doc.add_paragraph(f"{q_idx}. {q_text}")
-        doc.add_paragraph("")  # Пустая строка-разделитель
+            lines.append(f"{q_idx}. {q_text}")
+        lines.append("")  # Пустая строка-разделитель
 
     # Добавляем 1 намеренно невалидный билет (<3 вопросов) для проверки отказоустойчивости по ТЗ
-    doc.add_paragraph("Билет 99")
-    doc.add_paragraph("1. Единственный вопрос неполного билета (должен быть пропущен парсером).")
-    doc.add_paragraph("")
+    lines.append("Билет 99")
+    lines.append("1. Единственный вопрос неполного билета (должен быть пропущен парсером).")
+    lines.append("")
 
-    doc.save(filepath)
+    write_paragraphs(filepath, lines)
     print(f"[OK] Создан демонстрационный файл: {filepath}")
 
 
