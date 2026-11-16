@@ -1,25 +1,24 @@
 """
-Главная точка входа приложения Лабораторной работы №2:
-Десктопное приложение с графическим интерфейсом для генератора билетов.
+Точка входа ЛР2 (composition root): собирает сервис из файлов и запускает веб-интерфейс.
+Открывает браузер на http://127.0.0.1:5000.
 """
 
 import logging
-import sys
-from ui_main_window import MainWindow
+import threading
+import webbrowser
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
+from ticket_service import TicketService
+from web_app import create_app
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+HOST, PORT = "127.0.0.1", 5000
 
 
 def main() -> None:
-    app = MainWindow(
-        students_filepath="students.xlsx",
-        tickets_filepath="tickets.docx",
-        results_filepath="results.xlsx"
-    )
-    app.mainloop()
+    service = TicketService.from_files("students.xlsx", "tickets.docx", "results.xlsx")
+    threading.Timer(1.0, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
+    create_app(service).run(host=HOST, port=PORT)
 
 
 if __name__ == "__main__":
